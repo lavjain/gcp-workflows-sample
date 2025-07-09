@@ -1,0 +1,80 @@
+# This Cloud Workflow orchestrates the file processing steps.
+
+# You will need to deploy each Cloud Function before deploying this workflow,
+# so their URLs are available.
+
+- # Define the main entry point of the workflow
+  main:
+    params: [file_path, bucket_name]
+    steps:
+    - assign_project_id:
+        # Get the current GCP project ID from the execution environment
+        value: ${sys.get_env("PROJECT_ID")}
+
+    - get_gcs_object_metadata:
+        # Step 1: Get metadata from the GCS file directly using the Workflows built-in connector
+        call: googleapis.storage.v1.objects.get
+        args:
+          bucket: ${bucket_name}
+          object: ${file_path}
+        result: gcs_metadata
+        # Extract file size and creation/update time (which GCS refers to as 'updated')
+        # `updated` field is in RFC3339 format, suitable for BigQuery TIMESTAMP.
+
+    - call_word_count_function:
+        # Step 2: Call the Cloud Function to count total words
+        call: http.post
+        args:
+          # Replace REGION and PROJECT_ID
+          url: ${"https://$REGION-" + assign_project_id.value + ".cloudfunctions.net/word-count-function"}
+          body:
+            bucket_name: ${bucket_name}
+            file_path: ${file_path}
+          auth:
+            type: OIDC
+        result: word_count_response
+        # The result of the HTTP call is a map, parse the 'total_words' from it.
+
+    - call_top_10_words_function:
+        # Step 3: Call the Cloud Function to get top 10 words
+        call: http.post
+        args:
+          # Replace REGION and PROJECT_ID
+          url: ${"https://$REGION-" + assign_project_id.value + ".cloudfunctions.net/top-10-words-function"}
+          body:
+            bucket_name: ${bucket_name}
+            file_path: ${file_path}
+          auth:
+            type: OIDC
+        result: top_10_words_response
+        # The result of the HTTP call is a map, parse the 'top_10_words' from it.
+
+    - assign_output_data:
+        # Step 4: Create the output JSON with all collected information
+        assign:
+        - output_json:
+            filename: ${file_path}
+            bucket: ${bucket_name}
+            size_bytes: ${gcs_metadata.size}
+            # The 'updated' field from GCS metadata is already in RFC3339 format
+            upload_date: ${gcs_metadata.updated}
+            total_words: ${word_count_response.body.total_words}
+            top_10_words: ${top_10_words_response.body.top_10_words} # This will be a JSON object/array
+
+    - call_bigquery_insert_function:
+        # Step 5: Call the Cloud Function to insert the JSON into BigQuery
+        call: http.post
+        args:
+          # Replace REGION and PROJECT_ID
+          url: ${"https://$REGION-" + assign_project_id.value + ".cloudfunctions.net/insert-bigquery-function"}
+          body: ${output_json} # Pass the entire constructed JSON
+          auth:
+            type: OIDC
+        result: bigquery_insert_response
+
+    - log_success:
+        call: sys.log
+        args:
+          text: >
+            ${"Workflow completed successfully for file: " + file_path}
+          severity: INFO
