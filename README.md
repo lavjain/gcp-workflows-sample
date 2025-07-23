@@ -42,51 +42,81 @@ Before deploying, ensure you have:
     * Cloud Workflows API
     * Cloud Storage API
     * BigQuery API
+    * Eventarc API
+    * Cloud Run API
+    * Cloud Build API
+    * Cloud Logging API
 
 ## Deployment Steps
 
 Follow these steps to deploy your GCP file processing workflow. Replace placeholder values like
 ```
 export PROJECT_ID=<YOUR_GCP_PROJECT_ID>
-export BUCKET_NAME="$PROJECT_ID-demos"
+export BUCKET_NAME="${PROJECT_ID}-demos"
 export REGION="us-central1"
-PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
-echo $PROJECT_ID $BUCKET_NAME $PROJECT_NUMBER
+PROJECT_NUMBER=$(gcloud projects describe ${PROJECT_ID} --format='value(projectNumber)')
+echo ${PROJECT_ID} ${BUCKET_NAME} ${PROJECT_NUMBER}
 ```
 
-### 1. Set your GCP Project ID
-```bash
-gcloud config set project $PROJECT_ID
+### 1. Set your GCP Project ID and enable services
+```
+gcloud config set project ${PROJECT_ID}
+
+# Enable the required services
+gcloud services enable cloudfunctions.googleapis.com
+gcloud services enable workflows.googleapis.com
+gcloud services enable storage-api.googleapis.com
+gcloud services enable bigquery.googleapis.com
+gcloud services enable eventarc.googleapis.com
+gcloud services enable run.googleapis.com
+gcloud services enable cloudbuild.googleapis.com
+gcloud services enable logging.googleapis.com
+
+# Grant required roles to default compute service account to deploy cloud run functions
+DEFAULT_COMPUTE_SA=${PROJECT_NUMBER}-compute@developer.gserviceaccount.com
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+ --member="serviceAccount:${DEFAULT_COMPUTE_SA}" \
+ --role="roles/cloudbuild.builds.builder" > /dev/null
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+ --member="serviceAccount:${DEFAULT_COMPUTE_SA}" \
+ --role="roles/logging.logWriter" > /dev/null
 ```
 
 ### 2. Create BigQuery Dataset and Table
 First, set up your BigQuery table where the processed file information will be stored.
-```bash
+```
 # Create a BigQuery Dataset
-bq mk --dataset YOUR_GCP_PROJECT_ID:file_processing_dataset
+bq mk --dataset ${PROJECT_ID}:file_processing_dataset
 ```
 
 You can execute this SQL in the BigQuery console or using the bq query command.
 ```
-CREATE TABLE `$PROJECT_ID.file_processing_dataset.file_processing_results` (
-    filename STRING,
-    bucket STRING,
-    size_bytes INTEGER,
-    upload_date TIMESTAMP,
-    total_words INTEGER,
-    top_10_words JSON
+CREATE TABLE `${PROJECT_ID}.file_processing_dataset.file_processing_results` (
+    filename       STRING,
+    bucket         STRING,
+    size_bytes     INTEGER,
+    upload_date    TIMESTAMP,
+    total_words    INTEGER,
+    top_10_words   JSON
 );
-```
 
+# or use the bq command
+bq mk --table \
+  --description "Table to store results from the file processing workflow" \
+  "${PROJECT_ID}:file_processing_dataset.file_processing_results" \
+  filename:STRING,bucket:STRING,size_bytes:INTEGER,upload_date:TIMESTAMP,total_words:INTEGER,top_10_words:JSON
+```
 ### 3. Create a GCS Bucket
 This is the bucket where files will be uploaded to trigger the workflow.
 ```
-gsutil mb -l $REGION gs://$BUCKET_NAME
+gsutil mb -l ${REGION} gs://${BUCKET_NAME}
 ```
+The bucket must be in the same region as the workflow
 
 ### 4. Deploy Cloud Functions
-
-Navigate into the gcp-file-processor directory on your local machine.
+Navigate into the gcp-workflow-sample directory on your local machine.
 
 Each Cloud Function requires its own requirements.txt file as specified in the repository structure section above.
 
@@ -98,29 +128,29 @@ Required IAM Permissions for word-count-function service account:
 gcloud iam service-accounts create word-count-function-sa \
     --display-name="Cloud Function Word Count Service Account"
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:word-count-function-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+FUNCTION_SA="word-count-function-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${FUNCTION_SA}" \
     --role="roles/cloudfunctions.invoker" > /dev/null
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:word-count-function-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${FUNCTION_SA}" \
     --role="roles/storage.objectViewer" > /dev/null
-```
-Deploy cloud function
-```    
+
 gcloud functions deploy word-count-function \
     --runtime python310 \
     --entry-point count_words \
     --source cf-word-count/ \
     --trigger-http \
-    --region $REGION \
-    --service-account "word-count-function-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+    --region ${REGION} \
+    --service-account ${FUNCTION_SA} \
     --memory 256MB \
     --timeout 60s \
     --no-allow-unauthenticated # Only allow authenticated calls (from Workflow)
 ```
 
-#### C. top-10-words-function:
+#### B. top-10-words-function:
 Required IAM Permissions for top-10-words-function service account:
 * Cloud Storage Object Viewer
 * Cloud Functions Invoker
@@ -128,29 +158,29 @@ Required IAM Permissions for top-10-words-function service account:
 gcloud iam service-accounts create top-10-words-function-sa \
     --display-name="Cloud Function Top 10 Words Service Account"
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:top-10-words-function-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+FUNCTION_SA="top-10-words-function-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${FUNCTION_SA}" \
     --role="roles/cloudfunctions.invoker" > /dev/null
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:top-10-words-function-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${FUNCTION_SA}" \
     --role="roles/storage.objectViewer" > /dev/null
-```
-Deploy cloud function
-```
+
 gcloud functions deploy top-10-words-function \
     --runtime python310 \
     --entry-point get_top_10_words \
     --source cf-top-10-words/ \
     --trigger-http \
-    --region $REGION \
-    --service-account "top-10-words-function-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+    --region ${REGION} \
+    --service-account ${FUNCTION_SA} \
     --memory 256MB \
     --timeout 60s \
     --no-allow-unauthenticated
 ```
 
-#### D. insert-bigquery-function:
+#### C. insert-bigquery-function:
 Required IAM Permissions for insert-bigquery-function service account:
 * BigQuery Data Editor
 * Cloud Functions Invoker
@@ -158,23 +188,23 @@ Required IAM Permissions for insert-bigquery-function service account:
 gcloud iam service-accounts create insert-bigquery-function-sa \
     --display-name="Cloud Function Insert BigQuery Service Account"
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:insert-bigquery-function-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+FUNCTION_SA="insert-bigquery-function-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${FUNCTION_SA}" \
     --role="roles/cloudfunctions.invoker" > /dev/null
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:insert-bigquery-function-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${FUNCTION_SA}" \
     --role="roles/bigquery.dataEditor" > /dev/null
-```
-Deploy cloud function
-```
+
 gcloud functions deploy insert-bigquery-function \
     --runtime python310 \
     --entry-point insert_data_to_bigquery \
     --source cf-insert-bigquery/ \
     --trigger-http \
-    --region $REGION \
-    --service-account "insert-bigquery-function-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+    --region ${REGION} \
+    --service-account ${FUNCTION_SA} \
     --memory 256MB \
     --timeout 60s \
     --no-allow-unauthenticated
@@ -190,44 +220,90 @@ Required IAM Permissions for file-processing-workflow-sa service account:
 * Cloud Storage Object Viewer (allows the workflow to get GCS metadata directly)
 ```
 gcloud iam service-accounts create file-processing-workflow-sa \
-    --display-name="Cloud Function Insert BigQuery Service Account"
+    --display-name="File Processing Workflow Service Account"
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:file-processing-workflow-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+WORKFLOW_SA="file-processing-workflow-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${WORKFLOW_SA}" \
     --role="roles/workflows.editor" > /dev/null
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:file-processing-workflow-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-    --role="roles/workflows.invoker" > /dev/null
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${WORKFLOW_SA}" \
+    --role="roles/run.invoker" > /dev/null
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:file-processing-workflow-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${WORKFLOW_SA}" \
     --role="roles/cloudfunctions.invoker" > /dev/null
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:file-processing-workflow-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${WORKFLOW_SA}" \
     --role="roles/storage.objectViewer" > /dev/null
-```
-Deploy GCP workflow
-```
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+  --member="serviceAccount:${WORKFLOW_SA}" \
+  --role="roles/logging.logWriter" > /dev/null
+
 gcloud workflows deploy file-processing-workflow \
     --source=workflow.yaml \
-    --location=$REGION \
-    --service-account "file-processing-workflow-sa@$PROJECT_ID.iam.gserviceaccount.com"
+    --location=${REGION} \
+    --service-account ${WORKFLOW_SA}
+
+gcloud functions add-iam-policy-binding word-count-function \
+   --region=us-central1 \
+   --member="serviceAccount:${WORKFLOW_SA}" \
+   --role="roles/run.invoker"
 ```
 
+### 6. Create the Eventarc Trigger
+Create the trigger that connects the GCS bucket to the workflow.
+```
+gcloud iam service-accounts create eventarc-workflow-sa \
+    --display-name="Eventarc Trigger Workflow Service Account"
 
-### 6. Testing Your Workflow
+TRIGGER_SA="eventarc-workflow-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+  --member="serviceAccount:${TRIGGER_SA}" \
+  --role="roles/workflows.invoker" > /dev/null
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+  --member="serviceAccount:${TRIGGER_SA}" \
+  --role="roles/eventarc.eventReceiver" > /dev/null
+
+# grant the Pub/Sub Publisher role to the Cloud Storage service agent:
+STORAGE_AGENT="$(gcloud storage service-agent --project=${PROJECT_ID})"
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${STORAGE_AGENT}" \
+    --role="roles/pubsub.publisher" > /dev/null
+
+# grant the Service Account Token Creator role to the pubsub service agent
+PUBSUB_AGENT="service-${PROJECT_NUMBER}@gcp-sa-pubsub.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${PUBSUB_AGENT}" \
+    --role="roles/iam.serviceAccountTokenCreator" > /dev/null
+
+# Create the Eventarc Trigger
+gcloud eventarc triggers create gcs-workflow-trigger \
+    --location=us-central1 \
+    --destination-workflow=file-processing-workflow \
+    --destination-workflow-location=us-central1 \
+    --event-filters="type=google.cloud.storage.object.v1.finalized" \
+    --event-filters="bucket=${BUCKET_NAME}" \
+    --service-account=${TRIGGER_SA}
+```
+
+### 7. Testing Your Workflow
 Once all components are deployed, upload a text file (e.g., my_document.txt) to your YOUR_GCS_BUCKET_NAME GCS bucket.
 
 ```
 echo "This is a sample document for testing the workflow. This document has multiple words for word counting. Sample words." > my_document.txt
-gsutil cp my_document.txt gs://$BUCKET_NAME/my_document.txt
+gsutil cp my_document.txt gs://${BUCKET_NAME}/my_document.txt
 ```
 
 You can monitor the workflow executions in the Google Cloud Console:
-
-__Cloud Functions Logs__: Navigate to Cloud Functions > cloud-function-gcs-trigger > Logs to see if the trigger fired.
 
 __Workflow Executions__: Navigate to Cloud Workflows > file-processing-workflow > Executions to see the status and details of your workflow runs.
 
