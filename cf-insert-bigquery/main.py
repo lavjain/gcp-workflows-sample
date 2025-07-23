@@ -1,15 +1,14 @@
 # This Cloud Function inserts processed data into a BigQuery table.
 
-import os
 from google.cloud import bigquery
-import json # To handle the JSON type for top_10_words
+import json
 
 # Initialize BigQuery client
 bigquery_client = bigquery.Client()
 
-# Define your BigQuery dataset and table
-DATASET_ID = 'file_processing_dataset'
-TABLE_ID = 'file_processing_results'
+# Define BigQuery dataset and table
+DATASET_ID = "file_processing_dataset"
+TABLE_ID = "file_processing_results"
 
 def insert_data_to_bigquery(request):
   """
@@ -18,19 +17,20 @@ def insert_data_to_bigquery(request):
   """
   request_json = request.get_json(silent=True)
   if not request_json:
-    return {'error': 'Invalid JSON payload'}, 400
+    return {"error": "Invalid JSON payload"}, 400
 
   # Extract data from the request payload
-  filename = request_json.get('filename')
-  bucket = request_json.get('bucket')
-  size_bytes = request_json.get('size_bytes')
-  upload_date = request_json.get('upload_date') # Should be ISO format string
-  total_words = request_json.get('total_words')
-  top_10_words_data = request_json.get('top_10_words')
+  filename = request_json.get("filename")
+  bucket = request_json.get("bucket")
+  size_bytes = request_json.get("size_bytes")
+  upload_date = request_json.get("upload_date") # Should be ISO format string
+  total_words = request_json.get("total_words")
+  top_10_words_data = request_json.get("top_10_words")
 
   # Validate essential fields
-  if not all([filename, bucket, size_bytes is not None, upload_date, total_words is not None, top_10_words_data is not None]):
-    return {'error': 'Missing required fields in payload'}, 400
+  if not all([filename, bucket, size_bytes is not None, upload_date,
+              total_words is not None, top_10_words_data is not None]):
+    return {"error": "Missing required fields in payload"}, 400
 
   print(f"Inserting data for file {filename} into BigQuery...")
 
@@ -60,15 +60,19 @@ def insert_data_to_bigquery(request):
 
   try:
     table_ref = bigquery_client.dataset(DATASET_ID).table(TABLE_ID)
-    errors = bigquery_client.insert_rows(table_ref, rows_to_insert)
+    # Serialize the record to JSON
+    json_record = json.dumps(rows_to_insert)
+    bq_record = json.loads(json_record)  # Deserialize to ensure it's valid JSON
+
+    errors = bigquery_client.insert_rows_json(table_ref, bq_record)
 
     if errors:
       print(f"Encountered errors while inserting rows: {errors}")
-      return {'status': 'error', 'errors': errors}, 500
+      return {"status": "error", "errors": errors}, 500
     else:
       print(f"Successfully inserted data for {filename} into BigQuery.")
-      return {'status': 'success'}
+      return {"status": "success"}
 
   except Exception as e:
     print(f"Error inserting into BigQuery: {e}")
-    return {'error': str(e)}, 500
+    return {"error": str(e)}, 500
