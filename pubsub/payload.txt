@@ -1,0 +1,32 @@
+export PROJECT_ID=<YOUR_GCP_PROJECT_ID>
+
+# Assign the multi-line string to the PAYLOAD variable
+PAYLOAD=$(cat <<EOF
+{
+  "files": [
+    {
+      "bucket_name": "${PROJECT_ID}-recipes",
+      "file_path": "Classic Chocolate Chip Cookies.pdf"
+    },
+    {
+      "bucket_name": "${PROJECT_ID}-recipes",
+      "file_path": "Creamy Tomato Soup.pdf"
+    },
+    {
+      "bucket_name": "${PROJECT_ID}-recipes",
+      "file_path": "Fluffy Scrambled Eggs.pdf"
+    },
+    {
+      "bucket_name": "${PROJECT_ID}-recipes",
+      "file_path": "Quick Chicken Stir-Fry.pdf"
+    },
+    {
+      "bucket_name": "${PROJECT_ID}-recipes",
+      "file_path": "Simple Spaghetti Carbonara.pdf"
+    }
+  ]
+}
+EOF
+)
+
+gcloud pubsub topics publish file-processing-topic --message "$PAYLOAD"

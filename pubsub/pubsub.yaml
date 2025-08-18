@@ -1,0 +1,91 @@
+# This workflow is triggered by Pub/Sub and can handle either a direct JSON payload
+# or a JSON object pointing to a payload file in GCS.
+
+main:
+  params: [input_data]
+  steps:
+  - decode_pubsub_message:
+      assign:
+      - decoded_message: ${json.decode(base64.decode(input_data.data.message.data))}
+
+  - process_input:
+      # This switch determines if the payload is direct or a pointer to a file in GCS.
+      switch:
+      # Case 1: The decoded message is the direct payload (a map with a "files" key).
+      - condition: ${"files" in decoded_message}
+        assign:
+        - message_data: ${decoded_message}
+        - output_bucket: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID") + "-results"}
+        - output_basename: "direct-payload"
+      # Case 2 (Default): The decoded message is a pointer to a file.
+      - condition: ${true}
+        steps:
+        - read_input_file_from_gcs:
+            call: googleapis.storage.v1.objects.get
+            args:
+              bucket: ${decoded_message.bucket}
+              object: ${decoded_message.file}
+              alt: "media"
+            result: file_content
+        - parse_file_content:
+            assign:
+            - message_data: ${json.decode(file_content)}
+            - output_bucket: ${decoded_message.bucket}
+            - output_basename: ${decoded_message.file}
+
+  - prepare_output_vars:
+      assign:
+      - execution_id: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+      - output_filename: ${output_basename + ".results-" + execution_id + ".json"}
+
+  - log_processed_data:
+      call: sys.log
+      args:
+        json:
+          message: ${"Successfully parsed input. Output will be written to gs://" + output_bucket + "/" + output_filename}
+          payload: ${message_data}
+        severity: INFO
+
+  - initialize_results:
+      assign:
+      - results: []
+
+  - prepare_file_list:
+      switch:
+      - condition: ${"files" in message_data}
+        assign:
+        - file_list: ${message_data.files}
+      - condition: ${true}
+        assign:
+        - file_list: []
+
+  - get_file_sizes:
+      for:
+        value: file
+        in: ${file_list}
+        steps:
+        - get_file_metadata:
+            call: googleapis.storage.v1.objects.get
+            args:
+              bucket: ${file.bucket_name}
+              object: ${file.file_path}
+            result: gcs_metadata
+        - assign_file_size:
+            assign:
+            - file_size:
+                file_path: ${file.file_path}
+                size_bytes: ${gcs_metadata.size}
+        - append_result:
+            assign:
+            - results: ${list.concat(results, [file_size])}
+
+  - write_output_to_gcs:
+      call: googleapis.storage.v1.objects.insert
+      args:
+        uploadType: "media"
+        bucket: ${output_bucket}
+        name: ${output_filename}
+        body: ${json.encode(results)}
+
+  - return_output_path:
+      return: ${"gs://" + output_bucket + "/" + output_filename}

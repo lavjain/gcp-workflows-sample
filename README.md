@@ -285,7 +285,7 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --member="serviceAccount:${PUBSUB_AGENT}" \
     --role="roles/iam.serviceAccountTokenCreator" > /dev/null
 
-# Create the Eventarc Trigger
+# Create the Eventarc Trigger (triggered on file upload to bucket)
 gcloud eventarc triggers create gcs-workflow-trigger \
     --location=us-central1 \
     --destination-workflow=file-processing-workflow \
