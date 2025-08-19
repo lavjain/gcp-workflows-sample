@@ -14,6 +14,60 @@ The solution leverages the following GCP services:
 * **Cloud Workflows:** Orchestrates the sequence of calls to the Cloud Functions and handles the extraction of GCS object metadata.
 * **BigQuery:** Stores the structured output data from the file processing.
 
+```mermaid
+%%{init: { 'theme': 'dark' }}%%
+graph TD
+    %% Define styles for different service types
+    classDef trigger stroke:#f0a000,stroke-width:2px;
+    classDef orchestrator stroke:#548235,stroke-width:2px;
+    classDef compute stroke:#2f75b5,stroke-width:2px;
+    classDef data stroke:#4285F4,stroke-width:2px;
+
+    %% Define the nodes in the graph
+    Trigger["fa:fa-bucket GCS File Upload + fa:fa-plug Eventarc"]
+
+    subgraph WF [fa:fa-cogs Cloud Workflows]
+        Step1["Start Workflow"]
+        Step2["Get GCS Metadata"]
+        Step3["Call Word Count Function"]
+        Step4["Call Top 10 Words Function"]
+        Step5["Assemble Final JSON"]
+        Step6["Call BigQuery Insert Function"]
+        EndStep["End Workflow"]
+    end
+
+    WordCountFunc[fa:fa-microchip Word Count Function]
+    TopWordsFunc[fa:fa-microchip Top 10 Words Function]
+    BigQueryFunc[fa:fa-microchip BigQuery Insert Function]
+    
+    BigQuery[(fa:fa-table BigQuery)]
+
+    %% Define the links between nodes
+    Trigger -- "Triggers" --> Step1
+    Step1 --> Step2
+    Step2 --> WordCountFunc
+    WordCountFunc --> Step3
+    Step3 --> TopWordsFunc
+    TopWordsFunc --> Step4
+    Step4 --> Step5
+    Step5 --> BigQueryFunc
+    BigQueryFunc --> Step6
+    Step6 --> EndStep
+    
+    %% Show data interactions
+    WordCountFunc -- " Read file from GCS " <--> Trigger
+    TopWordsFunc -- " Read file from GCS " <--> Trigger
+    BigQueryFunc -- " Write data to BQ " --> BigQuery
+
+
+    %% Apply the styles to the nodes
+    class Trigger trigger;
+    class WF orchestrator;
+    class WordCountFunc compute;
+    class TopWordsFunc compute;
+    class BigQueryFunc compute;
+    class BigQuery data;
+```
 ## Repository Structure
 
 ```
