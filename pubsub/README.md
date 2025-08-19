@@ -20,6 +20,51 @@ The solution leverages the following GCP services:
 
 **Eventarc**: Connects the Pub/Sub topic to the Cloud Workflow, triggering an execution for each new message.
 
+```mermaid
+graph TD
+    %% Define styles for node types
+    classDef gcs fill:#e6f2ff,stroke:#4285F4,stroke-width:2px;
+    classDef trigger fill:#fff2cc,stroke:#f0a000,stroke-width:2px;
+
+    %% Define the nodes in the graph
+    Trigger[fa:fa-google Pub/Sub via Eventarc]
+    Step1["Decode Pub/Sub Message"]
+    Decision{"Check Payload Type"}
+    PathA["Assign Direct Payload"]
+    PathB["Read File from GCS"]
+    Step4["Prepare Output Vars & Process Files (Loop)"]
+    Step5["Write Results to GCS"]
+    EndStep["End"]
+    
+    GCS_Input[(fa:fa-bucket GCS Input)]
+    GCS_Referenced[(fa:fa-bucket GCS Referenced)]
+    GCS_Output[(fa:fa-bucket GCS Output)]
+
+    %% Define the links between nodes
+    Trigger --> Step1
+    Step1 --> Decision
+    Decision -- "Direct Payload" --> PathA
+    Decision -- "File Pointer" --> PathB
+    
+    PathB --> GCS_Input
+    
+    PathA --> Step4
+    PathB --> Step4
+
+    Step4 --> GCS_Referenced
+    
+    Step4 --> Step5
+    Step5 --> GCS_Output
+    
+    Step5 --> EndStep
+
+    %% Apply the styles to the nodes
+    class Trigger trigger;
+    class GCS_Input gcs;
+    class GCS_Referenced gcs;
+    class GCS_Output gcs;
+```
+
 ## Prerequisites
 
 Before deploying, ensure you have:
